@@ -9,7 +9,7 @@ import soundfile as sf
 import tempfile
 import shutil
 
-# Ensure temporary directory exists
+# Temporary directory
 TEMP_DIR = "temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
@@ -20,22 +20,22 @@ def detect_beats(audio_path):
     beat_times = librosa.frames_to_time(beat_frames, sr=sr)
     return beat_times, tempo
 
-# Function to resize media to match dimensions
+# Function to resize media
 def resize_media(frame_or_clip, target_width, target_height):
     if isinstance(frame_or_clip, np.ndarray):  # Image
         return cv2.resize(frame_or_clip, (target_width, target_height), interpolation=cv2.INTER_AREA)
     else:  # VideoClip
         return frame_or_clip.resize((target_width, target_height))
 
-# Function to create video with beat-sync
+# Function to create beat-synced video
 def create_beat_synced_video(media_files, audio_path, output_path, progress_bar):
     beat_times, tempo = detect_beats(audio_path)
     audio = AudioFileClip(audio_path)
     clips = []
     media_index = 0
     total_beats = len(beat_times)
-    
-    # Set target dimensions from first media
+
+    # Get dimensions from first media
     first_media = media_files[0]
     if first_media.endswith((".jpg", ".png")):
         frame = cv2.imread(first_media)
@@ -49,14 +49,10 @@ def create_beat_synced_video(media_files, audio_path, output_path, progress_bar)
 
     for i, beat_time in enumerate(beat_times):
         if media_index >= len(media_files):
-            break  # Stop if we run out of media
-
+            break
         progress_bar.progress((i + 1) / total_beats)
         next_beat = beat_times[i + 1] if i + 1 < len(beat_times) else audio.duration
-        duration = next_beat - beat_time
-
-        # Minimum duration to avoid overly short clips
-        duration = max(duration, 0.5)
+        duration = max(next_beat - beat_time, 0.5)
 
         media = media_files[media_index]
         if media.endswith((".jpg", ".png")):
@@ -72,26 +68,27 @@ def create_beat_synced_video(media_files, audio_path, output_path, progress_bar)
         clips.append(clip)
         media_index += 1
 
-    # If media runs out before audio, add countdown
+    # Add countdown if media runs out
     if media_index < len(media_files):
         remaining_time = audio.duration - beat_times[media_index - 1]
         countdown_clip = create_countdown_clip(remaining_time, width, height)
         countdown_clip = countdown_clip.set_start(beat_times[media_index - 1])
         clips.append(countdown_clip)
 
-    # Concatenate clips and set audio
     final_video = concatenate_videoclips(clips, method="compose")
     final_video = final_video.set_audio(audio)
     final_video.write_videofile(output_path, codec="libx264", audio_codec="aac", fps=24)
 
-# Function to create a countdown clip
+# Function to create countdown clip with explicit string handling
 def create_countdown_clip(duration, width, height):
-    frames = int(duration * 24)  # Assuming 24 FPS
+    frames = int(duration * 24)  # 24 FPS
     countdown_frames = []
     for i in range(frames):
         time_left = duration - (i / 24)
         frame = np.zeros((height, width, 3), dtype=np.uint8)
-        cv2.putText(frame, f"Ending in {time_left:.1f}s", (width//4, height//2),
+        # Explicitly format the string outside NumPy context
+        text = "Ending in {:.1f}s".format(time_left)
+        cv2.putText(frame, text, (width // 4, height // 2),
                     cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 3)
         countdown_frames.append(frame)
     return ImageClip(np.array(countdown_frames), fps=24)
@@ -99,14 +96,14 @@ def create_countdown_clip(duration, width, height):
 # Streamlit App
 def main():
     st.title("🎵 Advanced Beat-Synced Video Editor 🎥")
-    st.markdown("Create dynamic videos from images and clips, synced to music beats!")
+    st.markdown("Create dynamic videos synced to music beats!")
 
-    # Sidebar for settings
+    # Sidebar settings
     st.sidebar.header("Settings")
     frame_rate = st.sidebar.slider("Default Frame Rate (for images)", 1, 30, 24)
     preview_enabled = st.sidebar.checkbox("Enable Preview", value=False)
 
-    # Step 1: Upload Media
+    # Upload media
     st.subheader("1. Upload Images or Videos")
     uploaded_media = st.file_uploader("Upload Images/Videos", type=["jpg", "png", "mp4"],
                                       accept_multiple_files=True)
@@ -120,7 +117,7 @@ def main():
             media_paths.append(temp_path)
         st.write(f"Uploaded {len(media_paths)} files.")
 
-    # Step 2: Upload Audio
+    # Upload audio
     st.subheader("2. Upload Audio")
     uploaded_audio = st.file_uploader("Upload Audio", type=["mp3", "wav"])
     audio_path = None
@@ -131,7 +128,7 @@ def main():
             f.write(uploaded_audio.read())
         st.audio(audio_path)
 
-    # Step 3: Generate Video
+    # Generate video
     if st.button("Generate Beat-Synced Video"):
         if not media_paths or not audio_path:
             st.error("Please upload media files and an audio file.")
@@ -140,16 +137,17 @@ def main():
             progress_bar = st.progress(0)
 
             with st.spinner("Processing video..."):
-                create_beat_synced_video(media_paths, audio_path, output_video_path, progress_bar)
+                try:
+                    create_beat_synced_video(media_paths, audio_path, output_video_path, progress_bar)
+                    st.success("Video generated successfully!")
+                except Exception as e:
+                    st.error(f"Video generation failed: {str(e)}")
+                    return
 
-            st.success("Video generated successfully!")
-
-            # Preview
             if preview_enabled:
                 st.subheader("Preview")
                 st.video(output_video_path)
 
-            # Download
             with open(output_video_path, "rb") as video_file:
                 st.download_button(
                     label="Download Video",
@@ -158,7 +156,7 @@ def main():
                     mime="video/mp4"
                 )
 
-    # Cleanup temporary files
+    # Cleanup
     if st.button("Clean Up Temporary Files"):
         shutil.rmtree(TEMP_DIR)
         os.makedirs(TEMP_DIR, exist_ok=True)
@@ -169,7 +167,3 @@ if __name__ == "__main__":
         main()
     except Exception as e:
         st.error(f"An error occurred: {str(e)}")
-    finally:
-        # Optional: Cleanup on exit (commented out to preserve files for debugging)
-        # shutil.rmtree(TEMP_DIR, ignore_errors=True)
-        pass
